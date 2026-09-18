@@ -1,0 +1,12 @@
+# Raw corpus - not redistributed
+data/raw/
+*.rds
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+
+# OS
+.DS_Store
+Thumbs.db
