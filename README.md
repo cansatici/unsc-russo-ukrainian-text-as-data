@@ -66,7 +66,7 @@ poster/                 conference poster (PDF)
 ## Authors
 
 Ahmet Can Satıcı, M.A. Social and Cultural Anthropology, University of Bayreuth
-Eric Macpherson Bailón
+Eric Macpherson Bailón, M.A. History & Economics, Master of Arts, University of Bayreuth
 
 Corpus by Prof. Dr. Mirco Schoenfeld.
 
