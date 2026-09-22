@@ -125,7 +125,7 @@ R packages: tidyverse, quanteda, quanteda.textstats, lubridate, igraph, ggraph.
 ## Authors
 
 Ahmet Can Satıcı, M.A. Social and Cultural Anthropology, University of Bayreuth
-Eric Macpherson Bailón
+Eric Macpherson Bailón, MA, Centre de Recherche sur les Inégalités Sociales, Sciences Po
 
 The original project was joint work. The code in this repository was rewritten by Ahmet Can Satıcı.
 
