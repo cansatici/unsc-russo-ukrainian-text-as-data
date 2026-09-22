@@ -1,0 +1,6 @@
+data/raw/
+*.rds
+*.RData
+*.tar
+.Rhistory
+.Rproj.user/
