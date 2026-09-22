@@ -1,6 +1,6 @@
 # UNSC Ukraine Speeches: Text-as-Data Analysis (2014–2023)
 
-Analysis of UN Security Council speeches on Ukraine agenda items from 2014 to 2023: how the vocabulary of the debate changed with the full-scale invasion, how Russia and Ukraine frame the conflict, and which countries speak alike.
+Analysis of UN Security Council speeches on Ukraine agenda items from 2014 to 2023. The code measures how the vocabulary of the debate changed after the full-scale invasion, which words separate Russian speeches from Ukrainian ones, and which countries use similar language.
 
 Originally a project at the University of Bayreuth (May–August 2025), presented at Days of Ukraine in Bavaria, German-Ukrainian Academic Society / University of Bayreuth, October 2025. The original analysis scripts were only partly preserved. The code in this repository is a reimplementation against the published corpus, and the results below come from this code.
 
@@ -48,7 +48,7 @@ In the keyness comparison between the two post-invasion communities, single-word
 Most distinctive words before the invasion: *minsk, agreements, osce, eastern, crimea, mission, monitoring, separatists, ceasefire, contact, normandy.*
 After the invasion: *war, food, children, grain, global, nuclear, crimes, infrastructure, energy, sexual, black, plant.*
 
-Before the invasion the list is dominated by terms of the Minsk agreements and the OSCE monitoring mission; after it, by terms about the war and its humanitarian effects.
+The earlier list is mostly terms from the Minsk agreements and the OSCE monitoring mission. The later one is mostly terms about the fighting and its humanitarian effects.
 
 ![Monthly speech volume](figures/monthly_volume.png)
 
@@ -72,7 +72,7 @@ After the invasion it is the 2nd least similar of 30. Its number of network conn
 | Pre-invasion | 14 | 10 | 8 | 7 |
 | Post-invasion | 3 | 1 | 1 | 0 |
 
-Russia's own mean similarity changed little (0.59 to 0.56). What changed is that the other countries became more similar to each other: the 70th-percentile similarity rose from 0.63 to 0.74. Russia's most similar country after the invasion is still Ukraine (0.76); in the network below, Russia's only remaining edge is to Ukraine. This shows what the measure captures: a shared agenda, not a shared position.
+Russia's own mean similarity changed little (0.59 to 0.56). What changed is that the other countries became more similar to each other: the 70th-percentile similarity rose from 0.63 to 0.74. Russia's most similar country after the invasion is still Ukraine (0.76), and in the network below its only remaining edge is to Ukraine. The measure tracks which subjects countries talk about. It does not track whether they agree.
 
 ### 4. Post-invasion, the Council splits by how it names the war
 
@@ -94,8 +94,8 @@ A uses *invasion*, *aggression* and Russia's name far more often than B. B uses 
 
 - Only meetings with "Ukraine" in the agenda title are included. Ukraine-related debates held under other agenda items are missed.
 - The corpus covers public meetings with an S/PV record. Council activity without such a record is not included.
-- Word-frequency similarity measures shared vocabulary, not shared position. Ukraine is among Russia's two most similar countries in both periods.
-- Modularity is 0.26–0.28 in all networks: the communities are tendencies, not sharp blocs. Countries on the boundary change community with small preprocessing changes; Norway moved between the two post-invasion communities during development.
+- Word-frequency similarity measures shared vocabulary. It says nothing about agreement: Ukraine is among Russia's two most similar countries in both periods.
+- Modularity is 0.26–0.28 in all three networks, which is weak community structure. Countries on the boundary change community with small preprocessing changes; Norway moved between the two post-invasion communities during development.
 - Keyness compares frequencies. It does not show how a word is used; interpretations above should be checked against example sentences (`kwic`).
 - The post-invasion communities and the keyness comparing them come from the same data, so that comparison describes the communities rather than testing them.
 - Countries with fewer than 5 speeches in a period are excluded from that period's network.
