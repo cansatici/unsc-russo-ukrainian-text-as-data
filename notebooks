@@ -1,0 +1,464 @@
+# =============================================================
+# 01 - Corpus loading, metadata parsing, temporal analysis
+# UNSC Ukraine speeches
+#
+# Data: Schoenfeld, Eckhard, Patz & van Meegdenburg,
+#       "The UN Security Council Debates", Harvard Dataverse
+#       doi:10.7910/DVN/KGVSYH
+#
+# Place the downloaded corpus in data/raw/ before running.
+# =============================================================
+
+library(tidyverse)
+library(quanteda)
+library(quanteda.textstats)
+library(lubridate)
+
+# ---- Relative paths only ----
+raw_dir    <- "data/raw"
+out_dir    <- "figures"
+corpus_rds <- "data/unsc_corpus.rds"
+
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create("data", showWarnings = FALSE)
+
+# =============================================================
+# 1. LOAD
+# =============================================================
+# Dataverse download contains:
+#   docs.RData   -> object `raw_docs` (columns: filename, content)
+#   speaker.tsv  -> one row per speech, keyed by `filename`
+
+if (file.exists(corpus_rds)) {
+  message("Loading cached corpus")
+  corp <- readRDS(corpus_rds)
+} else {
+  load(file.path(raw_dir, "docs.RData"))   # creates raw_docs
+
+  speaker <- read_tsv(file.path(raw_dir, "speaker.tsv"),
+                      show_col_types = FALSE) %>%
+    select(filename, date, year, month, speaker, country_org,
+           role, participanttype, topic, tokens)
+
+  docs <- raw_docs %>%
+    inner_join(speaker, by = "filename") %>%
+    rename(country = country_org) %>%
+    mutate(date = as.Date(date),
+           year = as.numeric(year),
+           month = as.numeric(month))
+
+  message("Texts: ", nrow(raw_docs),
+          " | metadata rows: ", nrow(speaker),
+          " | matched: ", nrow(docs))
+
+  corp <- corpus(docs, docid_field = "filename", text_field = "content")
+
+  rm(raw_docs, speaker, docs)
+  saveRDS(corp, corpus_rds)
+}
+
+message("Corpus: ", ndoc(corp), " speeches")
+
+# =============================================================
+# 2. FILTER TO UKRAINE
+# =============================================================
+corp_ukr_all <- corpus_subset(
+  corp,
+  str_detect(tolower(topic), "ukraine|ukrainian")
+)
+message("Ukraine-related speeches: ", ndoc(corp_ukr_all))
+
+# Check which agenda topics the filter caught - inspect this list
+as_tibble(docvars(corp_ukr_all)) %>%
+  count(topic, sort = TRUE) %>%
+  print(n = 30)
+
+corp_ukr <- corpus_subset(corp_ukr_all, year >= 2014 & year <= 2023)
+message("2014-2023 window: ", ndoc(corp_ukr))
+
+# =============================================================
+# 3. SPEECHES BY COUNTRY
+# =============================================================
+by_country <- as_tibble(docvars(corp_ukr)) %>%
+  filter(!is.na(country), country != "") %>%
+  count(country, name = "n_speeches") %>%
+  arrange(desc(n_speeches))
+
+write_csv(by_country, "data/speeches_by_country.csv")
+print(head(by_country, 20))
+
+p_country <- ggplot(head(by_country, 20),
+                    aes(fct_reorder(country, n_speeches), n_speeches)) +
+  geom_col(width = 0.8) +
+  coord_flip() +
+  labs(title    = "Top 20 speakers by number of Ukraine-related speeches",
+       subtitle = "UNSC public meetings, 2014-2023",
+       x = NULL, y = "Number of speeches") +
+  theme_minimal(base_size = 12)
+
+ggsave(file.path(out_dir, "top20_countries.png"), p_country,
+       width = 8, height = 6, dpi = 300)
+
+# =============================================================
+# 4. MONTHLY SPEECH VOLUME
+# =============================================================
+monthly <- as_tibble(docvars(corp_ukr)) %>%
+  filter(!is.na(date)) %>%
+  mutate(ym = floor_date(as.Date(date), "month")) %>%
+  count(ym, name = "n_speeches") %>%
+  # Months without any speech are otherwise missing and a line plot
+  # would bridge them; add them explicitly as zero
+  complete(ym = seq(min(ym), max(ym), by = "month"),
+           fill = list(n_speeches = 0))
+
+write_csv(monthly, "data/monthly_volume.csv")
+
+message("Months in window: ", nrow(monthly),
+        " | months with no speeches: ", sum(monthly$n_speeches == 0))
+
+# Bars centred mid-month so that event lines fall inside their month
+p_monthly <- ggplot(monthly, aes(ym + days(14), n_speeches)) +
+  geom_col(width = 25) +
+  geom_vline(xintercept = as.Date("2014-03-18"), linetype = "dashed") +
+  geom_vline(xintercept = as.Date("2022-02-24"), linetype = "dashed") +
+  labs(title = "Monthly Ukraine-related UNSC speeches",
+       subtitle = paste("Speeches under agenda items with \"Ukraine\" in the title.",
+                        "Dashed lines: annexation of Crimea, full-scale invasion"),
+       x = NULL, y = "Number of speeches") +
+  theme_minimal(base_size = 12)
+
+ggsave(file.path(out_dir, "monthly_volume.png"), p_monthly,
+       width = 10, height = 5, dpi = 300)
+
+# =============================================================
+# 5. KEYNESS
+# =============================================================
+# Pre-2014 Ukraine speeches are too few to serve as a reference
+# corpus, so the comparisons are made within 2014-2023.
+
+corp_dated <- corpus_subset(corp_ukr, !is.na(date))
+
+# Transcripts use straight (') and curly (’) apostrophes in different
+# years, which splits e.g. "russia's" into two tokens. Normalise first.
+# Transcripts contain interpretation markers such as "(spoke in Spanish)"
+# or "(interpretation from Arabic)". They are not part of the speech and
+# inflate words like "spoke" and "russian", so remove them.
+clean_text <- function(x) {
+  x %>%
+    str_replace_all("\u2019", "'") %>%
+    str_remove_all(regex("\\((spoke|interpretation) (in|from) [A-Za-z]+\\)",
+                         ignore_case = TRUE)) %>%
+    # Each speech opens with the speaker line, e.g.
+    # "Mr. PICKERING (United States of America):" - drop it so the speaker's
+    # own country name is not counted as part of the speech
+    str_remove(regex("^\\s*([^:]{1,200}?\\)|The PRESIDENT)\\s*:",
+                     ignore_case = TRUE))
+}
+
+corp_dated <- corpus(
+  clean_text(as.character(corp_dated)),
+  docnames = docnames(corp_dated),
+  docvars  = docvars(corp_dated)
+)
+
+dfm_ukr <- corp_dated %>%
+  tokens(remove_punct = TRUE, remove_numbers = TRUE) %>%
+  tokens_tolower() %>%
+  tokens_remove(stopwords("en")) %>%
+  dfm()
+
+# ---- 5a. Before vs after the full-scale invasion ----
+period <- ifelse(docvars(dfm_ukr, "date") >= as.Date("2022-02-24"),
+                 "Post-invasion", "Pre-invasion")
+dfm_inv <- dfm_group(dfm_ukr, groups = period)
+
+message("Speeches pre-invasion: ",  sum(period == "Pre-invasion"),
+        " | post-invasion: ", sum(period == "Post-invasion"))
+
+key_inv <- textstat_keyness(dfm_inv, target = "Post-invasion")
+write_csv(as_tibble(key_inv), "data/keyness_invasion.csv")
+
+message("\nMost distinctive of post-invasion speeches:")
+print(head(key_inv, 20))
+message("\nMost distinctive of pre-invasion speeches (2014 - Feb 2022):")
+print(tail(key_inv, 20))
+
+# ---- 5b. Russia vs Ukraine ----
+dfm_ru_ua <- dfm_ukr %>%
+  dfm_subset(country %in% c("Russian Federation", "Ukraine")) %>%
+  dfm_group(groups = country) %>%
+  dfm_trim(min_termfreq = 1)   # drop words neither country used
+
+key_ru_ua <- textstat_keyness(dfm_ru_ua, target = "Russian Federation")
+write_csv(as_tibble(key_ru_ua), "data/keyness_russia_ukraine.csv")
+
+message("\nMost distinctive of Russia:")
+print(head(key_ru_ua, 20))
+message("\nMost distinctive of Ukraine:")
+print(tail(key_ru_ua, 20))
+
+message("01 complete.")
+
+# =============================================================
+# 02 - Country similarity networks
+#
+# Groups Ukraine-related speeches by country, measures lexical
+# similarity between countries, and detects communities.
+# Run for the full period and separately before and after the
+# full-scale invasion, because vocabulary shifts sharply between
+# the two periods (see 01) and would otherwise dominate the
+# clustering.
+#
+# Requires data/unsc_corpus.rds produced by 01.
+# =============================================================
+
+library(tidyverse)
+library(quanteda)
+library(quanteda.textstats)
+library(igraph)
+library(ggraph)
+
+out_dir <- "figures"
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+# Briefers and organisations that are not state or bloc actors
+non_state <- c("UN", "OSCE", "Save Ukraine")
+
+corp <- readRDS("data/unsc_corpus.rds")
+
+corp_ukr <- corpus_subset(
+  corp,
+  str_detect(tolower(topic), "ukraine|ukrainian") &
+    year >= 2014 & year <= 2023 &
+    !is.na(date) &
+    !is.na(country) & country != "" &
+    !(country %in% non_state)
+)
+
+# Normalise apostrophes and remove interpretation markers (see 01)
+# Transcripts contain interpretation markers such as "(spoke in Spanish)"
+# or "(interpretation from Arabic)". They are not part of the speech and
+# inflate words like "spoke" and "russian", so remove them.
+clean_text <- function(x) {
+  x %>%
+    str_replace_all("\u2019", "'") %>%
+    str_remove_all(regex("\\((spoke|interpretation) (in|from) [A-Za-z]+\\)",
+                         ignore_case = TRUE)) %>%
+    # Each speech opens with the speaker line, e.g.
+    # "Mr. PICKERING (United States of America):" - drop it so the speaker's
+    # own country name is not counted as part of the speech
+    str_remove(regex("^\\s*([^:]{1,200}?\\)|The PRESIDENT)\\s*:",
+                     ignore_case = TRUE))
+}
+
+corp_ukr <- corpus(
+  clean_text(as.character(corp_ukr)),
+  docnames = docnames(corp_ukr),
+  docvars  = docvars(corp_ukr)
+)
+
+invasion <- as.Date("2022-02-24")
+
+# Short labels for plots only; tables keep the full corpus names
+short_name <- function(x) {
+  dplyr::recode(x,
+    "United Kingdom Of Great Britain And Northern Ireland" = "UK",
+    "United States Of America"           = "USA",
+    "United Arab Emirates"               = "UAE",
+    "Russian Federation"                 = "Russia",
+    "European Union"                     = "EU",
+    "Republic Of Korea"                  = "South Korea",
+    "Slovak Republic"                    = "Slovakia",
+    "Bolivia (Plurinational State Of)"   = "Bolivia",
+    "Venezuela (Bolivarian Republic Of)" = "Venezuela")
+}
+
+# =============================================================
+# NETWORK FUNCTION
+# =============================================================
+build_network <- function(corp_sub, label, min_speeches = 5, q = 0.7) {
+
+  message("\n==== ", label, " ====")
+
+  counts <- table(docvars(corp_sub, "country"))
+  keep   <- names(counts)[counts >= min_speeches]
+  corp_sub <- corpus_subset(corp_sub, country %in% keep)
+
+  message("Speeches: ", ndoc(corp_sub),
+          " | countries (>= ", min_speeches, " speeches): ", length(keep))
+
+  dfm_c <- corp_sub %>%
+    corpus_group(groups = country) %>%
+    tokens(remove_punct = TRUE, remove_numbers = TRUE) %>%
+    tokens_tolower() %>%
+    tokens_remove(stopwords("en")) %>%
+    tokens_remove(c("ukraine", "ukrainian", "situation", "regarding")) %>%
+    dfm() %>%
+    dfm_trim(min_termfreq = 2, min_docfreq = 2) %>%
+    dfm_weight(scheme = "prop")
+
+  sim <- as.matrix(textstat_simil(dfm_c, method = "cosine",
+                                  margin = "documents"))
+
+  threshold <- quantile(sim[upper.tri(sim)], q)
+  message("Edge threshold (", q * 100, "th percentile): ", round(threshold, 3))
+
+  adj <- sim
+  adj[adj < threshold] <- 0
+  diag(adj) <- 0
+
+  g <- graph_from_adjacency_matrix(adj, mode = "undirected", weighted = TRUE)
+  if (ecount(g) == 0) stop("No edges above threshold.")
+
+  V(g)$degree <- degree(g)
+
+  set.seed(42)  # Louvain and layout have random tie-breaking
+  com <- cluster_louvain(g, weights = E(g)$weight)
+  V(g)$cluster <- as.factor(membership(com))
+
+  message("Communities: ", length(com),
+          " | modularity: ", round(modularity(com), 3))
+
+  tab <- tibble(country = V(g)$name,
+                cluster = as.integer(membership(com)),
+                degree  = V(g)$degree) %>%
+    arrange(cluster, desc(degree))
+
+  slug <- str_replace_all(tolower(label), "[^a-z0-9]+", "_")
+  write_csv(tab, file.path("data", paste0("communities_", slug, ".csv")))
+  print(tab, n = 100)
+
+  p <- ggraph(g, layout = "fr") +
+    geom_edge_link(aes(width = weight), alpha = 0.25, show.legend = FALSE) +
+    geom_node_point(aes(color = cluster, size = degree)) +
+    geom_node_text(aes(label = short_name(name)), repel = TRUE, size = 3.5) +
+    scale_edge_width(range = c(0.2, 1.5)) +
+    labs(title    = paste("Country similarity network:", label),
+         subtitle = paste0("Cosine similarity on word frequencies; edges above the ",
+                           q * 100, "th percentile; Louvain communities; modularity ",
+                           round(modularity(com), 2)),
+         color = "Community", size = "Degree") +
+    theme_void(base_size = 12)
+
+  ggsave(file.path(out_dir, paste0("network_", slug, ".png")), p,
+         width = 10, height = 8, dpi = 300)
+
+  invisible(list(graph = g, communities = com, table = tab, sim = sim))
+}
+
+# =============================================================
+# RUN
+# =============================================================
+net_all  <- build_network(corp_ukr, "2014-2023")
+net_pre  <- build_network(corpus_subset(corp_ukr, date <  invasion),
+                          "Pre-invasion 2014-2022")
+net_post <- build_network(corpus_subset(corp_ukr, date >= invasion),
+                          "Post-invasion 2022-2023")
+
+message("\n02 complete.")
+
+# =============================================================
+# 03 - Follow-up on the networks from 02
+#
+#  a) Is Russia's position in the network robust, or an
+#     artefact of the edge threshold?
+#  b) What distinguishes the two main post-invasion communities?
+#
+# Runs 02 first, then uses the objects it creates.
+# =============================================================
+
+# Always rebuild the networks so 03 never uses stale objects left
+# in memory from an earlier run.
+source("notebooks/02_similarity_network.R")
+
+ru <- "Russian Federation"
+
+# =============================================================
+# a) RUSSIA - threshold-independent measures
+# =============================================================
+# Mean cosine similarity of each country to all others.
+# Does not depend on the 70th-percentile cut used for edges.
+
+mean_similarity <- function(sim) {
+  diag(sim) <- NA
+  tibble(country = rownames(sim),
+         mean_sim = rowMeans(sim, na.rm = TRUE)) %>%
+    arrange(mean_sim) %>%
+    mutate(rank_from_bottom = row_number())
+}
+
+for (nm in c("pre", "post")) {
+  net <- get(paste0("net_", nm))
+  ms  <- mean_similarity(net$sim)
+
+  message("\n==== ", nm, "-invasion: least similar to everyone else ====")
+  print(head(ms, 8))
+
+  message("Russia: mean similarity ",
+          round(ms$mean_sim[ms$country == ru], 3),
+          ", rank ", ms$rank_from_bottom[ms$country == ru],
+          " of ", nrow(ms), " from the bottom")
+
+  message("Countries most similar to Russia:")
+  s_ru <- sort(net$sim[ru, colnames(net$sim) != ru], decreasing = TRUE)
+  print(round(head(s_ru, 5), 3))
+}
+
+# Russia's degree across a range of thresholds
+message("\n==== Russia's degree at different edge thresholds ====")
+degree_at <- function(sim, q) {
+  thr <- quantile(sim[upper.tri(sim)], q)
+  sum(sim[ru, colnames(sim) != ru] >= thr)
+}
+robust <- expand_grid(period = c("pre", "post"),
+                      q = c(0.5, 0.6, 0.7, 0.8)) %>%
+  rowwise() %>%
+  mutate(russia_degree = degree_at(get(paste0("net_", period))$sim, q),
+         n_countries   = nrow(get(paste0("net_", period))$sim)) %>%
+  ungroup()
+print(robust)
+write_csv(robust, "data/russia_degree_by_threshold.csv")
+
+# =============================================================
+# b) POST-INVASION COMMUNITIES - what separates them?
+# =============================================================
+tab <- net_post$table %>% filter(degree >= 2)   # drop weakly attached nodes
+
+western_cl <- tab$cluster[tab$country == "United States Of America"]
+tab <- tab %>%
+  mutate(group = if_else(cluster == western_cl, "Community A (with US)",
+                         "Other communities"))
+
+message("\n==== Post-invasion groups used for keyness ====")
+print(tab %>% arrange(group, desc(degree)), n = 50)
+
+corp_post <- corpus_subset(corp_ukr, date >= invasion &
+                             country %in% tab$country)
+grp <- tab$group[match(docvars(corp_post, "country"), tab$country)]
+
+# Speakers name their own country ("Brazil believes..."), which makes
+# country names look distinctive. Remove single-word country names
+# plus a few multi-word fragments.
+country_words <- unique(tolower(docvars(corp_ukr, "country")))
+country_words <- country_words[!str_detect(country_words, " ")]
+country_words <- c(country_words, "emirates", "arab", "eu",
+                   "kingdom", "britain")
+
+dfm_grp <- corp_post %>%
+  tokens(remove_punct = TRUE, remove_numbers = TRUE) %>%
+  tokens_tolower() %>%
+  tokens_remove(stopwords("en")) %>%
+  tokens_remove(country_words) %>%
+  dfm() %>%
+  dfm_group(groups = grp) %>%
+  dfm_trim(min_termfreq = 1)
+
+key_grp <- textstat_keyness(dfm_grp, target = "Community A (with US)")
+write_csv(as_tibble(key_grp), "data/keyness_post_invasion_communities.csv")
+
+message("\nMost distinctive of Community A (with US):")
+print(head(key_grp, 25))
+message("\nMost distinctive of the other communities:")
+print(tail(key_grp, 25))
+
+message("\n03 complete.")
