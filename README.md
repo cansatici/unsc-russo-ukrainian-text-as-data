@@ -102,7 +102,7 @@ A uses *invasion*, *aggression* and Russia's name far more often than B. B uses 
 
 ## Relation to the original poster
 
-The poster also showed a cross-conflict comparison of speech volume and a chart of sentiment toward DPR/LPR recognition. In the surviving scripts, neither is computed from the corpus: the speech counts are generated from assumed attention levels multiplied by conflict duration, and the sentiment scores are entered by hand. These figures are not reproduced here. The poster stated that geopolitical blocs persist throughout the conflict period; the reimplementation finds that the network structure changes with the invasion (findings 3 and 4).
+The poster stated that geopolitical blocs persist throughout the conflict period. Here, Russia's position in the network changes sharply with the invasion (finding 3). The communities also differ between the two periods, but the set of speakers changes as elected Council members rotate, so the two partitions are not directly comparable.
 
 ## Running
 
